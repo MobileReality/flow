@@ -5,6 +5,7 @@ import * as grpc from '@grpc/grpc-js';
 import assert from 'node:assert';
 import { isArray, isString } from 'lodash';
 import LRU from 'lru-cache';
+import type { ChannelOptions } from '@grpc/grpc-js/src/channel-options';
 
 function getErrorStackString(error: Error): string {
     return error.stack?.split('\n').slice(1).join('\n') ?? '<>';
@@ -21,11 +22,33 @@ const grpcClients = new LRU({
     ttl: 15 * 60 * 1000,
     ttlResolution: 10_000,
 
-    allowStale: true,
+    allowStale: false,
     updateAgeOnGet: true,
-    noDeleteOnStaleGet: true,
+    noDeleteOnStaleGet: false,
 });
 let roundRobin = 0;
+
+const defaultGrpcOptions: ChannelOptions = {
+    'grpc.http2.max_pings_without_data': 10,
+    'grpc.keepalive_time_ms': 30_000,
+    'grpc.keepalive_timeout_ms': 10_000,
+    'grpc.keepalive_permit_without_calls': 1,
+    'grpc.enable_retries': 1,
+    'grpc.max_connection_idle_ms': 15 * 60 * 1000,
+};
+
+async function grpcClientWaitReady(grpcClient: grpc.Client, timeout = 10_000) {
+    return new Promise<void>((resolve, reject) => {
+        const deadline = new Date(Date.now() + timeout);
+        grpcClient.waitForReady(deadline, (err: Error | undefined) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
 
 // Patch unary to use proper grpc
 export async function send(ix: any, context: any, opts: any = {}) {
@@ -36,6 +59,7 @@ export async function send(ix: any, context: any, opts: any = {}) {
     assert(context.ix, `SDK Send Error: context.ix must be defined.`);
 
     let node = opts.node;
+    const grpcOptions = (opts.grpcOptions ?? {}) as ChannelOptions;
     const serviceName = opts.grpcServiceName;
     if (isArray(node)) node = node[roundRobin++ % node.length];
     if (roundRobin > 1000) roundRobin = 0;
@@ -53,9 +77,13 @@ export async function send(ix: any, context: any, opts: any = {}) {
             unary: async (host: string, method: any, request: any, context: any) => {
                 let grpcClient = grpcClients.get<grpc.Client>(host);
                 if (!grpcClient) {
-                    grpcClient = new grpc.Client(host, grpc.credentials.createInsecure());
+                    grpcClient = new grpc.Client(host, grpc.credentials.createInsecure(), {
+                        ...defaultGrpcOptions,
+                        ...grpcOptions,
+                    });
                     grpcClients.set(host, grpcClient);
                 }
+                await grpcClientWaitReady(grpcClient);
                 // eslint-disable-next-line no-async-promise-executor
                 return await new Promise(async (resolve, reject) => {
                     try {
