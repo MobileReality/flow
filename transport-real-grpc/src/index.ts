@@ -28,7 +28,7 @@ const grpcClients = new LRU({
 });
 let roundRobin = 0;
 
-const defaultGrpcOptions: ChannelOptions = {
+export const defaultGrpcOptions: ChannelOptions = {
     'grpc.http2.max_pings_without_data': 10,
     'grpc.keepalive_time_ms': 30_000,
     'grpc.keepalive_timeout_ms': 10_000,
