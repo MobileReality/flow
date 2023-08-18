@@ -89,7 +89,7 @@ export async function send(ix: any, context: any, opts: any = {}) {
     assert(context.ix, `SDK Send Error: context.ix must be defined.`);
 
     let node = opts.node;
-    const nodeToken = opts.nodeToken;
+    const nodeToken = opts.nodeToken ?? (await context.config().get('nodeToken'));
     const nodeSecure = opts.nodeSecure ?? Boolean(nodeToken);
     const grpcOptions = (opts.grpcOptions ?? {}) as ChannelOptions;
     const serviceName = opts.grpcServiceName;
