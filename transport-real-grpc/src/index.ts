@@ -50,6 +50,36 @@ async function grpcClientWaitReady(grpcClient: grpc.Client, timeout = 10_000) {
     });
 }
 
+const nodeTokens = new Map<string, string>();
+
+const getSubdomain = (url: string) => {
+    let domain = url;
+    if (url.includes('://')) {
+        domain = url.split('://')[1];
+    }
+    return domain.split('.')[0];
+};
+
+// QuickNode credentials TODO other auth methods?
+function getCredentials(
+    node: string,
+    token: string | undefined,
+    secure: boolean,
+): grpc.ChannelCredentials {
+    if (!token) {
+        return secure ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
+    }
+
+    const serialized = `${encodeURIComponent(getSubdomain(node))}:${encodeURIComponent(token)}`;
+    const secureCred = grpc.credentials.createSsl();
+    const metaCreds = grpc.credentials.createFromMetadataGenerator((_params, callback) => {
+        const meta = new grpc.Metadata();
+        meta.add('authorization', `Basic ${Buffer.from(serialized).toString('base64')}`);
+        callback(null, meta);
+    });
+    return grpc.credentials.combineChannelCredentials(secureCred, metaCreds);
+}
+
 // Patch unary to use proper grpc
 export async function send(ix: any, context: any, opts: any = {}) {
     assert(
@@ -59,6 +89,8 @@ export async function send(ix: any, context: any, opts: any = {}) {
     assert(context.ix, `SDK Send Error: context.ix must be defined.`);
 
     let node = opts.node;
+    const nodeToken = opts.nodeToken;
+    const nodeSecure = opts.nodeSecure ?? Boolean(nodeToken);
     const grpcOptions = (opts.grpcOptions ?? {}) as ChannelOptions;
     const serviceName = opts.grpcServiceName;
     if (isArray(node)) node = node[roundRobin++ % node.length];
@@ -75,12 +107,20 @@ export async function send(ix: any, context: any, opts: any = {}) {
         }
         return await grpcSend(ix, context, {
             unary: async (host: string, method: any, request: any, context: any) => {
+                if (nodeToken && nodeTokens.get(node) !== nodeToken) {
+                    grpcClients.delete(host);
+                    nodeTokens.set(node, nodeToken);
+                }
                 let grpcClient = grpcClients.get<grpc.Client>(host);
                 if (!grpcClient) {
-                    grpcClient = new grpc.Client(host, grpc.credentials.createInsecure(), {
-                        ...defaultGrpcOptions,
-                        ...grpcOptions,
-                    });
+                    grpcClient = new grpc.Client(
+                        host,
+                        getCredentials(node, nodeToken, nodeSecure),
+                        {
+                            ...defaultGrpcOptions,
+                            ...grpcOptions,
+                        },
+                    );
                     grpcClients.set(host, grpcClient);
                 }
                 await grpcClientWaitReady(grpcClient);
