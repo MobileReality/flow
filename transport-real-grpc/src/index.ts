@@ -92,6 +92,7 @@ export async function send(ix: any, context: any, opts: any = {}) {
     const nodeToken = opts.nodeToken ?? (await context.config().get('nodeToken'));
     const nodeSecure = opts.nodeSecure ?? Boolean(nodeToken);
     const grpcOptions = (opts.grpcOptions ?? {}) as ChannelOptions;
+    const grpcMetadata = opts.gprcMetadata ?? {};
     const serviceName = opts.grpcServiceName;
     if (isArray(node)) node = node[roundRobin++ % node.length];
     if (roundRobin > 1000) roundRobin = 0;
@@ -135,7 +136,10 @@ export async function send(ix: any, context: any, opts: any = {}) {
                                 return method.responseType.deserializeBinary(value);
                             },
                             request,
-                            grpc.Metadata.fromHttp2Headers(metadataFromConfig),
+                            grpc.Metadata.fromHttp2Headers({
+                                ...metadataFromConfig,
+                                ...grpcMetadata,
+                            }),
                             (err, result) => {
                                 if (err) {
                                     reject(err);
